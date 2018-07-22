@@ -27,6 +27,9 @@ WRITE16_HANDLER ( intvkbd_dualport16_w )
 	/* copy the LSB over to the 6502 OP RAM, in case they are opcodes */
 	RAM	 = memory_region(REGION_CPU2);
 	RAM[offset] = data&0xff;
+
+	/******* MSB? *******/
+	RAM[offset+0x4000] = (data&0x0300)>>8;
 }
 
 READ_HANDLER ( intvkbd_dualport8_lsb_r )
@@ -61,6 +64,13 @@ static int sr1_int_pending;
 
 int intvkbd_text_blanked;
 
+struct tape_drive_state_type tape_drive;
+
+struct tape_drive_state_type *get_tape_drive_state(void)
+{
+	return &tape_drive;
+}
+
 READ_HANDLER ( intvkbd_dualport8_msb_r )
 {
 	unsigned char rv;
@@ -70,28 +80,40 @@ READ_HANDLER ( intvkbd_dualport8_msb_r )
 		switch (offset)
 		{
 			case 0x000:
-				rv = input_port_10_r(0) & 0x80;
-				logerror("TAPE: Read %02x from 0x40%02x - XOR Data?\n",rv,offset);
+				// Data in
+				//rv = input_port_10_r(0) & 0x80;
+				rv = tape_drive.read_data << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - Data\n",rv,offset);
 				break;
 			case 0x001:
-				rv = (input_port_10_r(0) & 0x40) << 1;
-				logerror("TAPE: Read %02x from 0x40%02x - Sense 1?\n",rv,offset);
+				// 0 = Drive Busy Executing Command, 1 = Drive Ok
+				//rv = (input_port_10_r(0) & 0x40) << 1;
+				rv = tape_drive.ready << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - Ready\n",rv,offset);
 				break;
 			case 0x002:
-				rv = (input_port_10_r(0) & 0x20) << 2;
-				logerror("TAPE: Read %02x from 0x40%02x - Sense 2?\n",rv,offset);
+				// 0 = Recordable surface, 1 = Leader Detect
+				//rv = (input_port_10_r(0) & 0x20) << 2;
+				rv = tape_drive.leader_detect << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - Leader Detect\n",rv,offset);
 				break;
 			case 0x003:
-				rv = (input_port_10_r(0) & 0x10) << 3;
-				logerror("TAPE: Read %02x from 0x40%02x - Tape Present\n",rv,offset);
+				// 0 = Tape Present, 1 = Tape Not Present
+				//rv = (input_port_10_r(0) & 0x10) << 3;
+				rv = tape_drive.tape_missing << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - Tape Missing\n",rv,offset);
 				break;
 			case 0x004:
-				rv = (input_port_10_r(0) & 0x08) << 4;
-				logerror("TAPE: Read %02x from 0x40%02x - Comp (339/1)\n",rv,offset);
+				// 0 = Not Playing/Recording, 1 = Playing/Recording
+				//rv = (input_port_10_r(0) & 0x08) << 4;
+				rv = tape_drive.playing << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - Playing/Recording\n",rv,offset);
 				break;
 			case 0x005:
-				rv = (input_port_10_r(0) & 0x04) << 5;
-				logerror("TAPE: Read %02x from 0x40%02x - Clocked Comp (339/13)\n",rv,offset);
+				// 0 = Data Detect, 1 = No Data
+				//rv = (input_port_10_r(0) & 0x04) << 5;
+				rv = tape_drive.no_data << 7;
+				logerror("TAPE: Read %02x from 0x40%02x - No Data\n",rv,offset);
 				break;
 			case 0x006:
 				if (sr1_int_pending)
@@ -105,7 +127,7 @@ READ_HANDLER ( intvkbd_dualport8_msb_r )
 					rv = 0x00;
 				else
 					rv = 0x80;
-				logerror("TAPE: Read %02x from 0x40%02x - Tape? Int Pending\n",rv,offset);
+				logerror("TAPE: Read %02x from 0x40%02x - Tape Int Pending\n",rv,offset);
 				break;
 			case 0x060:	/* Keyboard Read */
 				rv = 0xff;
@@ -170,14 +192,7 @@ READ_HANDLER ( intvkbd_dualport8_msb_r )
 		return (intvkbd_dualport_ram[offset]&0x0300)>>8;
 }
 
-static int tape_interrupts_enabled;
-static int tape_unknown_write[6];
-static int tape_motor_mode;
-static char *tape_motor_mode_desc[8] =
-{
-	"IDLE", "IDLE", "IDLE", "IDLE",
-	"EJECT", "PLAY/RECORD", "REWIND", "FF"
-};
+int tape_interrupts_enabled;
 
 WRITE_HANDLER ( intvkbd_dualport8_msb_w )
 {
@@ -188,32 +203,49 @@ WRITE_HANDLER ( intvkbd_dualport8_msb_w )
 		switch (offset)
 		{
 			case 0x020:
-				tape_motor_mode &= 3;
+				tape_drive.motor_state &= 3;
 				if (data & 1)
-					tape_motor_mode |= 4;
-				logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
+					tape_drive.motor_state |= 4;
+				//logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
 				break;
 			case 0x021:
-				tape_motor_mode &= 5;
+				tape_drive.motor_state &= 5;
 				if (data & 1)
-					tape_motor_mode |= 2;
-				logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
+					tape_drive.motor_state |= 2;
+				//logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
 				break;
 			case 0x022:
-				tape_motor_mode &= 6;
+				tape_drive.motor_state &= 6;
 				if (data & 1)
-					tape_motor_mode |= 1;
-				logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
+					tape_drive.motor_state |= 1;
+				//logerror("TAPE: Motor Mode: %s\n",tape_motor_mode_desc[tape_motor_mode]);
 				break;
 			case 0x023:
+				// 0=Read, 1=Write
+				tape_drive.writing = (data & 1);
+				break;
 			case 0x024:
+				// 0=Enable Channel B Audio, 1=Mute
+				tape_drive.audio_b_mute = (data & 1);
+				break;
 			case 0x025:
+				// 0=Enable Channel A Audio, 1=Mute
+				tape_drive.audio_a_mute = (data & 1);
+				break;
 			case 0x026:
+				// If read mode:
+				//	0=Read Channel B Data, 1 = Read Channel A Data
+				// If write mode:
+				//  0=Write Channel B data, 1 = Record Channel B Audio
+				tape_drive.channel_select = (data & 1);
+				break;
 			case 0x027:
-				tape_unknown_write[offset - 0x23] = (data & 1);
+				// Erase Head
+				tape_drive.erase = (data & 1);
 				break;
 			case 0x040:
-				tape_unknown_write[5] = (data & 1);
+				// Write data
+				tape_drive.write_data = (data & 1);
 				break;
 			case 0x041:
 				if (data & 1)
@@ -363,7 +395,7 @@ int intv_load_rom_file(int id, int required)
 			printf("intvkbd legacy cartridge slot empty - ok\n");
 	}
 
-	if (!(romfile = image_fopen (IO_CARTSLOT, id, OSD_FILETYPE_IMAGE, 0)))
+	if (!(romfile = image_fopen (IO_CARTSLOT, id, OSD_FILETYPE_IMAGE, OSD_FOPEN_READ)))
 	{
 		return INIT_FAIL;
 	}
@@ -419,6 +451,8 @@ int intv_load_rom(int id)
 	 * will think that the playcable and keyboard are not attached */
 	UINT8 *memory = memory_region(REGION_CPU1);
 
+	printf("In intv_load_rom...\n");
+
 	/* assume playcable is absent */
 	memory[0x4800<<1] = 0xff;
 	memory[(0x4800<<1)+1] = 0xff;
@@ -446,7 +480,6 @@ MACHINE_INIT( intv )
 	return;
 }
 
-
 void intv_interrupt_complete(int x)
 {
 	cpu_set_irq_line(0, CP1600_INT_INTRM, CLEAR_LINE);
@@ -454,8 +487,8 @@ void intv_interrupt_complete(int x)
 
 INTERRUPT_GEN( intv_interrupt )
 {
-	cpu_set_irq_line(0, CP1600_INT_INTRM, ASSERT_LINE);
 	sr1_int_pending = 1;
+	cpu_set_irq_line(0, CP1600_INT_INTRM, ASSERT_LINE);
 	timer_set(TIME_NOW+TIME_IN_CYCLES(3791, 0), 0, intv_interrupt_complete);
 	stic_screenrefresh();
 }
@@ -550,5 +583,187 @@ int intvkbd_load_rom (int id)
 	}
 
 	return INIT_PASS;
+
+}
+
+static int max_bits = 0;
+static unsigned char *tape_data;
+
+void get_tape_bit(int position, int channel, int *data_present, int *data)
+{
+	int byte = (position >> 2)*2 + channel;
+	int data_present_mask = 1 << ((3-(position % 4))*2 + 1);
+	int data_mask = 1 << ((3-(position % 4))*2);
+
+	//printf("%d\t0x%02x 0x%02x\n",byte,data_present_mask,data_mask);
+
+	if (tape_data[byte] & data_present_mask)
+		*data_present = 1;
+	else
+		*data_present = 0;
+
+	if (tape_data[byte] & data_mask)
+		*data = 1;
+	else
+		*data = 0;
+}
+
+void set_tape_bit(int position, int data)
+{
+	int byte = (position >> 2)*2 + 1;
+	int data_present_mask = 1 << ((3-(position % 4))*2 + 1);
+	int data_mask = 1 << ((3-(position % 4))*2);
+
+	tape_data[byte] |= data_present_mask;
+	if (data)
+		tape_data[byte] |= data_mask;
+	else
+		tape_data[byte] &= (~data_mask);
+}
+
+int intvkbd_tape_init(int id)
+{
+	FILE *tapefile;
+	int filesize;
+
+	if (!(tapefile = image_fopen (IO_CASSETTE, id, OSD_FILETYPE_IMAGE, OSD_FOPEN_READ)))
+	{
+		return INIT_FAIL;
+	}
+
+	filesize = osd_fsize(tapefile);
+	tape_data = (unsigned char *)malloc(filesize);
+	osd_fread(tapefile, tape_data, filesize);
+
+	osd_fclose(tapefile);
+
+	max_bits = 2*filesize;
+
+	tape_drive.tape_missing = 0;
+	tape_drive.leader_detect = 0;
+	tape_drive.ready = 1;
+
+	tape_drive.bit_counter = 0;
+	return INIT_PASS;
+}
+
+void intvkbd_tape_exit(int id)
+{
+	FILE *tapefile;
+	int filesize;
+
+	if (tape_data)
+	{
+		if (!(tapefile = image_fopen (IO_CASSETTE, id, OSD_FILETYPE_IMAGE, OSD_FOPEN_RW)))
+		{
+			filesize = osd_fsize(tapefile);
+			osd_fwrite(tapefile, tape_data, filesize);
+			osd_fclose(tapefile);
+
+			free(tape_data);
+			tape_data = 0;
+
+			max_bits = 0;
+			tape_drive.tape_missing = 1;
+			tape_drive.bit_counter = 0;
+		}
+	}
+}
+
+void update_tape_drive(void)
+{
+	/* temp */
+
+	if (tape_drive.writing)
+	{
+		if (tape_drive.channel_select == 0) /* data */
+		{
+			set_tape_bit(tape_drive.bit_counter,tape_drive.write_data);
+		}
+		else
+		{
+			/* recording audio - TBD */
+		}
+	}
+	else
+	{
+		int channel;
+		int data_present;
+		int data;
+
+		channel = tape_drive.channel_select ^ 1;
+
+		get_tape_bit(tape_drive.bit_counter,channel,&data_present,&data);
+
+		tape_drive.no_data = data_present ^ 1;
+		tape_drive.read_data = data;
+
+		/* temporary */
+		tape_drive.playing = data_present ^ 1;
+	}
+
+	if (tape_drive.motor_state == 5) /* Playing */
+	{
+		tape_drive.bit_counter++;
+		if (tape_drive.bit_counter >= max_bits)
+			tape_drive.bit_counter = max_bits-1;
+	}
+
+	if (tape_drive.motor_state == 6) /* Rewinding */
+	{
+		tape_drive.bit_counter-=4;
+		//tape_drive.bit_counter--;
+		if (tape_drive.bit_counter < 0)
+			tape_drive.bit_counter = 0;
+	}
+	if (tape_drive.motor_state == 7) /* FastFwd */
+	{
+		tape_drive.bit_counter+=2;
+		//tape_drive.bit_counter++;
+		if (tape_drive.bit_counter >= max_bits)
+			tape_drive.bit_counter = max_bits-1;
+	}
+
+	if ((tape_drive.bit_counter == 0) || (tape_drive.bit_counter == max_bits-1))
+		tape_drive.leader_detect = 1;
+	else
+		tape_drive.leader_detect = 0;
+}
+
+INTERRUPT_GEN( intvkbd_interrupt )
+{
+	intv_interrupt();
+}
+
+INTERRUPT_GEN( intvkbd_interrupt2 )
+{
+	static int tape_interrupt_divider = 0;
+
+	tape_interrupt_divider++;
+	tape_interrupt_divider = tape_interrupt_divider % 50;
+
+	if (tape_interrupt_divider == 0)
+	{
+#if 0
+			update_tape_drive();
+
+		/* do sr1 interrupt plus possible tape interrupt */
+		if (tape_interrupts_enabled)
+			tape_int_pending = 1;
+#endif
+		sr1_int_pending = 1;
+		cpu_set_irq_line(1, 0, PULSE_LINE);
+	}
+	else
+	{
+			update_tape_drive();
+
+		/* do only possible tape interrupt */
+		if (tape_interrupts_enabled)
+		{
+			tape_int_pending = 1;
+			cpu_set_irq_line(1, 0, PULSE_LINE);
+		}
+	}
 
 }

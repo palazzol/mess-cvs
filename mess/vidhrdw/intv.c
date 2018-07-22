@@ -94,7 +94,7 @@ int sprites_collide(int spriteNum0, int spriteNum1) {
             (s1->doubleyres ? 2 : 1);
     h2 = 8 * (s2->quady ? 4 : 1) * (s2->doubley ? 2 : 1) *
             (s2->doubleyres ? 2 : 1);
-    
+
     if ((x1 + w1 <= x2) || (y1 + h1 <= y2) ||
             (x1 >= x2 + w2) || (y1 >= y2 + h2))
         return FALSE;
@@ -607,7 +607,7 @@ static void draw_background(struct mame_bitmap *bitmap, int transparency)
 				}
 				offs++;
 			} // next col
-		} // next row 
+		} // next row
 	}
 }
 */
@@ -833,11 +833,43 @@ WRITE_HANDLER( intvkbd_tms9927_w )
 	}
 }
 
+#define INTVKBD_DEBUG 1
+
+#ifdef INTVKBD_DEBUG
+
+static char *tape_motor_mode_desc[8] =
+{
+	"Stop", "Stop", "Stop", "Stop",
+	"Eject", "Play", "Rewind", "FastFwd"
+};
+
+static char *bit_desc[2] = { "0", "1" };
+
+void write_word_in_color(struct mame_bitmap *bitmap, char *string, int x, int y, int color)
+{
+	int i;
+
+	for(i=0;i<strlen(string);i++)
+	{
+		drawgfx(bitmap,Machine->gfx[2],
+			string[i],
+			color,
+			0,0,
+			x*8,y*8,
+			&Machine->visible_area, TRANSPARENCY_PEN, 0);
+
+		x++;
+	}
+}
+
+#endif
+
+extern int tape_interrupts_enabled;
+
 VIDEO_UPDATE( intvkbd )
 {
 	int x,y,offs;
 	int current_row;
-//	char c;
 
 	/* Draw the underlying INTV screen first */
 	video_update_intv(bitmap, cliprect);
@@ -873,35 +905,192 @@ VIDEO_UPDATE( intvkbd )
 		}
 	}
 
-#if 0
+#ifdef INTVKBD_DEBUG
 	// debugging
-	c = tape_motor_mode_desc[tape_motor_mode][0];
-	drawgfx(bitmap,Machine->gfx[2],
-		c,
-		1,
-		0,0,
-		0*8,0*8,
-		&Machine->visible_area, TRANSPARENCY_PEN, 0);
-	for(y=0;y<5;y++)
+
 	{
-		drawgfx(bitmap,Machine->gfx[2],
-			tape_unknown_write[y]+'0',
-			1,
-			0,0,
-			0*8,(y+2)*8,
-			&Machine->visible_area, TRANSPARENCY_PEN, 0);
+		UINT8 *memory = memory_region(REGION_CPU2);
+
+		static int last_isr_lsb = 0;
+		static int data_toggle_state = 0;
+
+		//int i;
+
+		int black = 0;
+		int blue = 1;
+		int red = 2;
+		int yellow = 6;
+		int white = 7;
+		int orange = 10;
+
+		//int xoffs = 41;
+		//int yoffs = 1;
+		//int toffs = 15;
+
+		int xoffs = 0;
+		int yoffs = 24;
+		int toffs = 8;
+
+		struct tape_drive_state_type *tape_drive = 0;
+		char buf[256];
+
+		memset(buf, 191, 40);
+		//for(i=0;i<40;i++)
+		//	buf[i] = 191;
+		buf[40] = 0;
+		write_word_in_color(bitmap, buf, xoffs, yoffs, white);
+
+		tape_drive = get_tape_drive_state();
+
+		if (tape_drive->writing && tape_drive->motor_state == 5)
+			write_word_in_color(bitmap, "Record",
+		                    xoffs, yoffs, red);
+		else
+			write_word_in_color(bitmap, tape_motor_mode_desc[tape_drive->motor_state],
+		                    xoffs, yoffs, blue);
+
+		if (tape_drive->writing == 0)
+		{
+			if (tape_drive->channel_select)
+				write_word_in_color(bitmap, "A Data ", xoffs+toffs, yoffs, blue);
+			else
+				write_word_in_color(bitmap, "B Data ", xoffs+toffs, yoffs, blue);
+			if (!tape_drive->no_data)
+				write_word_in_color(bitmap, bit_desc[tape_drive->read_data], xoffs+toffs+7, yoffs, yellow);
+		}
+		else
+		{
+			if (tape_drive->channel_select)
+				write_word_in_color(bitmap, "B Audio", xoffs+toffs, yoffs, red);
+			else
+			{
+				write_word_in_color(bitmap, "B Data ", xoffs+toffs, yoffs, red);
+				if (tape_drive->erase)
+					write_word_in_color(bitmap, bit_desc[tape_drive->write_data], xoffs+toffs+7, yoffs, yellow);
+			}
+		}
+
+		if (!tape_drive->audio_a_mute)
+			write_word_in_color(bitmap, "AudA", xoffs+18, yoffs, yellow);
+		if (!tape_drive->audio_b_mute)
+			write_word_in_color(bitmap, "AudB", xoffs+23, yoffs, yellow);
+
+		sprintf(buf,"%08d",tape_drive->bit_counter);
+		write_word_in_color(bitmap, buf, xoffs+28, yoffs, black);
+
+		if (tape_interrupts_enabled)
+		{
+			write_word_in_color(bitmap, "*", xoffs+38, yoffs, orange);
+			if (last_isr_lsb != memory[0x03e8])
+			{
+				last_isr_lsb = memory[0x03e8];
+				data_toggle_state += 1;
+				data_toggle_state %= 8;
+				if (data_toggle_state < 4)
+					write_word_in_color(bitmap, "*", xoffs+39, yoffs, orange);
+				else
+					write_word_in_color(bitmap, " ", xoffs+39, yoffs, orange);
+			}
+		}
+		else
+			write_word_in_color(bitmap, "  ", xoffs+38, yoffs, orange);
+
+
+#if 0
+		// No Data
+		write_word_in_color(bitmap, "No Data:", xoffs, yoffs, yellow);
+		if (tape_drive->no_data)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs, blue);
+
+		// Data In
+		write_word_in_color(bitmap, "Data In:", xoffs, yoffs+1, yellow);
+		if (tape_drive->read_data)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+1, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+1, blue);
+
+		// Leader
+		write_word_in_color(bitmap, "Leader:", xoffs, yoffs+2, yellow);
+		if (tape_drive->leader_detect)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+2, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+2, blue);
+
+		// Tape Missing
+		write_word_in_color(bitmap, "Tape Missing:", xoffs, yoffs+3, yellow);
+		if (tape_drive->tape_missing)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+3, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+3, blue);
+
+		// Playing
+		write_word_in_color(bitmap, "Playing?:", xoffs, yoffs+4, yellow);
+		if (tape_drive->playing)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+4, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+4, blue);
+
+		// Ready
+		write_word_in_color(bitmap, "Ready:", xoffs, yoffs+5, yellow);
+		if (tape_drive->ready)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+5, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+5, blue);
+
+
+		write_word_in_color(bitmap, "Motor:", xoffs, yoffs+7, black);
+		write_word_in_color(bitmap, tape_motor_mode_desc[tape_drive->motor_state],
+		                    xoffs+toffs, yoffs+7, blue);
+
+		write_word_in_color(bitmap, "Channel:", xoffs, yoffs+8, black);
+		if (tape_drive->writing == 0)
+			if (tape_drive->channel_select)
+				write_word_in_color(bitmap, "Reading A Data", xoffs+toffs, yoffs+8, blue);
+			else
+				write_word_in_color(bitmap, "Reading B Data", xoffs+toffs, yoffs+8, blue);
+		else
+			if (tape_drive->channel_select)
+				write_word_in_color(bitmap, "Recording B Audio", xoffs+toffs, yoffs+8, red);
+			else
+				write_word_in_color(bitmap, "Writing B Data", xoffs+toffs, yoffs+8, red);
+
+		write_word_in_color(bitmap, "AudA Mute:", xoffs, yoffs+9, black);
+		if (tape_drive->audio_a_mute)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+9, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+9, blue);
+
+		write_word_in_color(bitmap, "AudB Mute:", xoffs, yoffs+10, black);
+		if (tape_drive->audio_b_mute)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+10, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+10, blue);
+
+		write_word_in_color(bitmap, "Erase:", xoffs, yoffs+11, black);
+		if (tape_drive->erase)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+11, red);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+11, blue);
+
+		write_word_in_color(bitmap, "Write Data:", xoffs, yoffs+12, black);
+		if (tape_drive->write_data)
+			write_word_in_color(bitmap, "1", xoffs+toffs, yoffs+12, blue);
+		else
+			write_word_in_color(bitmap, "0", xoffs+toffs, yoffs+12, blue);
+
+		write_word_in_color(bitmap, "Bit Count:", xoffs, yoffs+14, white);
+		sprintf(buf,"%d",tape_drive->bit_counter);
+		write_word_in_color(bitmap, buf, xoffs+toffs, yoffs+14, blue);
+
+		if (tape_interrupts_enabled)
+			write_word_in_color(bitmap, "Tape Interrupts Enabled", xoffs, yoffs+16, red);
+
+		sprintf(buf,"Current ISR=$%02X%02X",memory[0x03e9],memory[0x03e8]);
+		write_word_in_color(bitmap, buf, xoffs, yoffs+18, blue);
+#endif
 	}
-	drawgfx(bitmap,Machine->gfx[2],
-			tape_unknown_write[5]+'0',
-			1,
-			0,0,
-			0*8,8*8,
-			&Machine->visible_area, TRANSPARENCY_PEN, 0);
-	drawgfx(bitmap,Machine->gfx[2],
-			tape_interrupts_enabled+'0',
-			1,
-			0,0,
-			0*8,10*8,
-			&Machine->visible_area, TRANSPARENCY_PEN, 0);
+
 #endif
 }

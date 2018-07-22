@@ -3434,6 +3434,8 @@ unsigned cp1600_get_reg(int regnum)
 {
 	switch( regnum )
 	{
+	case REG_PC: return cp1600.r[7];
+	case REG_SP: return cp1600.r[6];
 	case CP1600_R0: return cp1600.r[0];
 	case CP1600_R1: return cp1600.r[1];
 	case CP1600_R2: return cp1600.r[2];
@@ -3450,6 +3452,8 @@ void cp1600_set_reg (int regnum, unsigned val)
 {
 	switch( regnum )
 	{
+	case REG_PC: cp1600.r[7] = val; break;
+	case REG_SP: cp1600.r[6] = val; break;
 	case CP1600_R0: cp1600.r[0] = val; break;
 	case CP1600_R1: cp1600.r[1] = val; break;
 	case CP1600_R2: cp1600.r[2] = val; break;

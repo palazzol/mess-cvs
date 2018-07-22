@@ -376,11 +376,6 @@ static MEMORY_WRITE_START( writemem2 )
 	{ 0xc000, 0xffff, MWA_ROM },
 MEMORY_END
 
-static INTERRUPT_GEN( intv_interrupt2 )
-{
-	cpu_set_irq_line(1, 0, PULSE_LINE);
-}
-
 static MACHINE_DRIVER_START( intv )
 	/* basic machine hardware */
 	MDRV_CPU_ADD_TAG("main", CP1600, 3579545/4)        /* Colorburst/4 */
@@ -395,7 +390,9 @@ static MACHINE_DRIVER_START( intv )
     /* video hardware */
 	MDRV_VIDEO_ATTRIBUTES(VIDEO_TYPE_RASTER)
 	MDRV_SCREEN_SIZE(40*8, 24*8)
+	//MDRV_SCREEN_SIZE(40*8, 25*8)
 	MDRV_VISIBLE_AREA(0, 40*8-1, 0, 24*8-1)
+	//MDRV_VISIBLE_AREA(0, 40*8-1, 0, 25*8-1)
 	MDRV_GFXDECODE( intv_gfxdecodeinfo )
 	MDRV_PALETTE_LENGTH(32)
 	MDRV_COLORTABLE_LENGTH(2 * 2 * 16 * 16)
@@ -413,12 +410,13 @@ static MACHINE_DRIVER_START( intvkbd )
 	MDRV_IMPORT_FROM( intv )
 	MDRV_CPU_MODIFY( "main" )
 	MDRV_CPU_MEMORY(readmem_kbd,writemem_kbd)
+	MDRV_CPU_VBLANK_INT(intvkbd_interrupt,1)
 
 	MDRV_CPU_ADD(M6502, 3579545/2)	/* Colorburst/2 */
 	MDRV_CPU_MEMORY(readmem2,writemem2)
-	MDRV_CPU_VBLANK_INT(intv_interrupt2,1)
+	MDRV_CPU_VBLANK_INT(intvkbd_interrupt2,50)
 
-	MDRV_INTERLEAVE(100)
+	MDRV_INTERLEAVE(1000)
 
     /* video hardware */
 	MDRV_GFXDECODE( intvkbd_gfxdecodeinfo )
@@ -532,11 +530,11 @@ static const struct IODevice io_intvkbd[] = {
 		"tap\0",       		/* file extensions */
 		IO_RESET_CPU,		/* reset if file changed */
 		0,
-		NULL,				/* init */
-		NULL,				/* exit */
+		intvkbd_tape_init,	/* init */
+		intvkbd_tape_exit,	/* exit */
 		NULL,				/* info */
-		NULL,               /* open */
-		NULL,               /* close */
+		NULL,  				/* open */
+		NULL, 				/* close */
 		NULL,               /* status */
 		NULL,               /* seek */
 		NULL,				/* tell */
